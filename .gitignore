@@ -1,0 +1,8 @@
+*cache*
+.venv
+build/
+*.egg-info
+.conda
+*.code-workspace
+Tests/
+commit msg.txt
