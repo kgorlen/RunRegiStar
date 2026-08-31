@@ -3,6 +3,7 @@ import glob
 import os
 import subprocess
 import sys
+from collections import defaultdict
 from collections.abc import Generator
 from pathlib import Path
 from typing import NoReturn
@@ -32,8 +33,164 @@ ARGS: argparse.Namespace
 """Parsed command-line arguments."""
 
 
+class Image(Path):
+    """Small wrapper around pathlib.Path for image files."""
+
+    __slots__ = ("_id",)
+    _id: str
+
+    def __new__(cls, *args, **kwargs):
+        """Create a new Image instance."""
+        img = super().__new__(cls, *args, **kwargs)
+        img._id = f"ID{id(img):x}"
+        """Unique image ID"""
+        return img
+
+    def with_segments(self, *segments):
+        """
+        CRITICAL: Ensures path modifications (.parent, / operator)
+        generate a brand new path instance with its own unique object ID.
+        """
+        return Image(*segments)
+
+    @property
+    def id(self) -> str:
+        """Return the image file unique ID."""
+        return self._id
+
+
+class Script:
+    """Class to represent a RegiStar script."""
+
+    def __init__(self, output_dir: Path):
+        """Initialize the Script instance."""
+        self.lines: list[str] = []
+        """List of lines in the script."""
+        self.output_dir: Path = output_dir
+        """Path to the output directory for generated images."""
+        self.groups: defaultdict[str, list[Image]] = defaultdict(list)
+        """Registered image groups, keyed by base image id."""
+        self.base_image_ids: list[str] = []
+        """IDs of the base images."""
+
+    def comment(self, *lines: str) -> None:
+        """Add comment lines to the script.
+
+        Args:
+            lines (str): Comment text.
+        """
+        for line in lines:
+            self.lines.append(f"# {line}")
+
+    def set_directory(self, directory: str) -> None:
+        """Set the directory for input images.
+
+        Args:
+            directory (str): Directory path.
+        """
+        self.lines.append(f'SetDirectory( "{directory}" )')
+
+    def open_image(self, image: Image) -> None:
+        """Open an input image file.
+
+        Args:
+            image (Image): Image instance to open.
+
+        Raises:
+            FileNotFoundError: If the image file does not exist.
+        """
+        if not image.is_file():
+            raise FileNotFoundError(f"Image file not found: {image}")
+
+        self.lines.append(f'{image.id} = Open( "{image!s}" )')
+        self.lines.append(f"Describe({image.id})")
+        self.groups[image.id].append(image)
+
+    def register_images(self, base_image: Image, images_to_register: list[Image]) -> None:
+        """Register a list of images to a base image.
+
+        Args:
+            base_image (Image): Base image for registration.
+            images_to_register (list[Image]): List of images to register.
+        """
+        self.base_image_ids.append(base_image.id)
+        for image in images_to_register:
+            self.open_image(image)
+            if image.id != base_image.id:
+                reg_image: Image = Image(self.output_dir / f"{image.stem}_reg.tif")
+                self.groups[base_image.id].append(reg_image)
+                self.lines.append(
+                    f"{reg_image.id} = Register[0,0,0,0,1]( {image.id}, {base_image.id} )"
+                )
+                self.lines.append(f"Describe({reg_image.id})")
+
+    def stack_images(self, images: list[Image]) -> Image:
+        """Stack a list of images into a single output image.
+
+        Args:
+            images (list[Image]): List of images to stack.
+        Returns:
+            Image: Stacked Image.
+        """
+        stack_image: Image = Image(self.output_dir / f"{images[0].stem}-{images[-1].stem}_stk.tif")
+        """Stacked image."""
+        self.register_images(images[0], images)
+        self.groups[images[0].id].append(stack_image)
+        self.lines.append(f"{stack_image.id} = Combine[4,1]( {images[0].id} )")
+        self.lines.append(f"Describe({stack_image.id})")
+        return stack_image
+
+    def save_image(self, image: Image) -> None:
+        """Save an image to the output directory.
+
+        Args:
+            image (Image): Image instance to save.
+        """
+        self.lines.append(f'SaveAs( {image.id}, "{image!s}" )')
+
+    def close_all(self) -> None:
+        """Close all open images."""
+        self.lines.append("CloseAll( )")
+
+    def execute(self, exe_path: str) -> None:
+        """Execute the script using the RegiStar executable.
+
+        Args:
+            exe_path (str): Path to the RegiStar executable.
+        """
+        output_script_path: Path = self.output_dir / "auriga_registar_script.txt"
+        with open(output_script_path, "w") as f:
+            f.write("\n".join(self.lines))
+        print(f"Auriga RegiStar script generated at: {output_script_path}")
+
+        cmd = [exe_path, "-script", str(output_script_path)]
+        print(f"Running RegiStar: {cmd}")
+        subprocess.run(cmd, check=True)
+
+    def output_images(self, operation: str) -> list[Image]:
+        """Return a list of output images based on the operation performed.
+
+        Args:
+            operation (str): The operation performed, either "register" or "stack".
+        """
+        output_images: list[Image] = []
+        """Registered or stacked images, depending on the operation."""
+        tag = "_reg" if operation == "register" else "_stk"
+        output_images = [
+            image
+            for base_id in self.base_image_ids
+            for image in self.groups[base_id]
+            if image.stem[-4:] == tag
+        ]
+        return output_images
+
+
 def cleanup_and_exit(status: int = 0) -> NoReturn:
-    """Clean up and exit with the given status code."""
+    """Clean up and exit with the given status code.
+
+    Args:
+        status (int): Exit status code. Defaults to 0.
+    """
     print(f"{SCRIPT_NAME} finished.")
     input("Press Enter to exit ...")
 
@@ -41,31 +198,13 @@ def cleanup_and_exit(status: int = 0) -> NoReturn:
 
 
 def fatal_error(msg: str) -> NoReturn:
-    """Print a CRITICAL message and sys.exit(1)."""
-    print(f"CRITICAL - {msg}; exiting.", file=sys.stderr)
-    cleanup_and_exit(1)
-
-
-def prompt_yes_no(question: str, default: bool = True) -> bool:
-    """Prompt for yes/no response.
+    """Print a CRITICAL message and sys.exit(1).
 
     Args:
-        question (str): Question to ask the user.
-        default (bool, optional): Default value if the user doesn't provide an answer. Defaults to True.
-
-    Returns:
-        bool: User's response.
+        msg (str): Error message to display.
     """
-    while True:
-        response = input(f"{question} (y/n) [{('y' if default else 'n')}]: ").strip().lower()
-        if response == "":
-            return default
-        elif response in ["y", "yes"]:
-            return True
-        elif response in ["n", "no"]:
-            return False
-        else:
-            print("Please enter 'y' for yes or 'n' for no.")
+    print(f"CRITICAL - {msg}; exiting.", file=sys.stderr)
+    cleanup_and_exit(1)
 
 
 def file_path_generator(
@@ -139,6 +278,28 @@ def file_path_generator(
             yield from expand_glob(glob_pattern)
 
 
+def prompt_yes_no(question: str, default: bool = True) -> bool:
+    """Prompt for yes/no response.
+
+    Args:
+        question (str): Question to ask the user.
+        default (bool, optional): Default value if the user doesn't provide an answer. Defaults to True.
+
+    Returns:
+        bool: User's response.
+    """
+    while True:
+        response = input(f"{question} (y/n) [{('y' if default else 'n')}]: ").strip().lower()
+        if response == "":
+            return default
+        elif response in ["y", "yes"]:
+            return True
+        elif response in ["n", "no"]:
+            return False
+        else:
+            print("Please enter 'y' for yes or 'n' for no.")
+
+
 def prompt_int(question: str, min: int, max: int, default: int | None = None) -> int:
     """Prompt for integer response.
 
@@ -166,61 +327,26 @@ def prompt_int(question: str, min: int, max: int, default: int | None = None) ->
             print(f"Please enter a number between {min} and {max}.")
 
 
-def register(
-    image_paths: list[Path], script: list[str], stack_num: int = 0, base_index: int = 0
-) -> tuple[list[str], list[str]]:
+def stack(input_images: list[Image], script: Script) -> None:
+    """Stack input images into multiple stacks based on user input.
 
-    open_images: list[str] = []
-    """List of open image IDs SnnIii, nn = stack number, ii = image number in stack."""
-    reg_images: list[str] = []
-    """List of registered image IDs, R_SnnIii."""
+    Args:
+        input_images (list[Image]): List of input images to stack.
+        script (Script): RegiStar Script instance.
 
-    for file_index, file_path in enumerate(image_paths, 1):
-        image: str = f"S{stack_num:02d}I{file_index:02d}"
-        script.append(f'{image} = Open( "{file_path.name}" )')
-        script.append(f"Describe({image})")
-        open_images.append(image)
-
-    first_index = 1 if base_index == 0 else 0
-    reg_images.append(f"R_{open_images[first_index]}")
-    """Registration result ID."""
-    script.append(f"{reg_images[-1]} = Register[0,0,0,0,1]( {open_images[first_index]}, {open_images[base_index]} )")
-    script.append(f"Describe({reg_images[-1]})")
-
-    if len(open_images) > 2:
-        for image in filter(
-            lambda x: x != open_images[first_index] and x != open_images[base_index], open_images
-        ):
-            reg_images.append(f"R_{image}")
-            script.append(f"{reg_images[-1]} = Register[0,0,0,0,1](  {image}, {open_images[base_index]}  )")
-            script.append(f"Describe({reg_images[-1]})")
-
-    return open_images, reg_images
-
-
-def stack(image_paths: list[Path], input_dir: Path, output_dir: Path) -> tuple[list[str], list[Path]]:
-    total_images: int = len(image_paths)
+    """
+    total_images: int = len(input_images)
     """Number of images to stack."""
     num_stacks: int = prompt_int("Enter the total number of stacks to create", 1, total_images // 2)
     """Number of stacks to create."""
-    stack_paths: list[Path] = []
-    """Paths of stacked output image files."""
-    images: list[list[Path]] = []
-    """Paths of images in each stack."""
+    images: list[list[Image]] = []
+    """Input images in each stack."""
     stack_size: int
     """Size of current stack."""
 
-    script = [
-        "# ----------------------------------------------------",
-        "# Stacking script generated by runregistar",
-        "# ----------------------------------------------------",
-        "",
-        f'SetDirectory( "{input_dir}" )',
-    ]
-
     if total_images % num_stacks == 0 and prompt_yes_no("Are all stacks equal in size"):
         stack_size = total_images // num_stacks
-        images = [image_paths[i : i + stack_size] for i in range(0, total_images, stack_size)]
+        images = [input_images[i : i + stack_size] for i in range(0, total_images, stack_size)]
     else:
         print("Enter the number of images for each individual stack ...")
         assigned_count: int = 0
@@ -228,42 +354,36 @@ def stack(image_paths: list[Path], input_dir: Path, output_dir: Path) -> tuple[l
         for stack_num in range(1, num_stacks):
             max_allowed: int = total_images - assigned_count - (num_stacks - stack_num)
             stack_size = prompt_int(
-                f"Enter number of images in stack {stack_num}, first image {image_paths[assigned_count].name} (2 to {max_allowed}): ",
+                f"Enter number of images in stack {stack_num}, first image {input_images[assigned_count].name} (2 to {max_allowed}): ",
                 2,
                 max_allowed,
             )
-            images.append(image_paths[assigned_count : assigned_count + stack_size])
+            images.append(input_images[assigned_count : assigned_count + stack_size])
             assigned_count += stack_size
 
         # Last stack gets whatever is left over automatically
         stack_size = total_images - assigned_count
-        images.append(image_paths[assigned_count : assigned_count + stack_size])
+        images.append(input_images[assigned_count : assigned_count + stack_size])
         print(f"Stack {num_stacks} size is {stack_size} (auto-assigned remainder).")
 
     # Build RegiStar script
-    for stack_num, stack_files in enumerate(images, start=1):
-        open_images: list[str]
-        """List of open image IDs SnnIii, nn = stack number, ii = image number in stack."""
+    for stack_num, stack_images in enumerate(images, start=1):
+        script.comment(f"--- Processing Stack {stack_num} ---")
+        combined_image = script.stack_images(stack_images)
+        script.save_image(combined_image)
+        script.close_all()
+        script.comment(f"--- Stack {stack_num} processed ---")
 
-        script.append(f"# --- Processing Stack {stack_num:02d} ---")
-        open_images = register(stack_files, script, stack_num)[0]
-
-        combid: str = f"C{stack_num:02d}"
-        """Combined image ID."""
-        script.append(f"{combid} = Combine[4,1]( {open_images[0]} )")
-        script.append(f"Describe({combid})")
-
-        stack_name: str = f"{stack_files[0].stem}-{stack_files[-1].stem}_stacked.tif"
-        stack_paths.append(output_dir / stack_name)
-        script.append(f'SaveAs( {combid}, "{output_dir / stack_name}" )')
-        script.append("CloseAll( )")
-        script.append("")
-
-    return script, stack_paths
+    script.comment("----------------------------------------------------")
 
 
 def main() -> None:
+    """Main function to parse arguments and execute the appropriate operation.
 
+    Raises:
+        FileNotFoundError: If RegiStar executable is not found.
+        ValueError: If invalid operation is specified or insufficient images are provided.
+    """
     parser = argparse.ArgumentParser(description="Run StarNet on an input image")
     parser.add_argument(
         "--operation",
@@ -284,73 +404,62 @@ def main() -> None:
     else:
         raise FileNotFoundError("RegiStar.exe not found in standard paths.")
 
-    image_paths: list[Path] = sorted(
-        arg.resolve(strict=True) for arg in file_path_generator(ARGS.input, recursive=False)
+    input_images: list[Image] = sorted(
+        Image(arg.resolve(strict=True)) for arg in file_path_generator(ARGS.input, recursive=False)
     )
-    """Paths of image files to process."""
+    """List of input images."""
 
-    total_images: int = len(image_paths)
+    total_images: int = len(input_images)
     """Number of images to stack."""
     if total_images < 2:
         raise ValueError(f"At least 2 images are required, only {total_images} provided.")
 
-    input_dir: Path = image_paths[0].parent
+    input_dir: Path = input_images[0].parent
     """Path of the image input directory."""
-    output_dir: Path = image_paths[0].parent
+    output_dir: Path = input_images[0].parent
     """Path of the image output directory."""
-    output_images: list[Path] = []
+    output_images: list[Image] = []
     """List of output image paths."""
+    script: Script = Script(output_dir)
+    """Generated RegiStar script."""
+
+    script.comment(
+        "----------------------------------------------------",
+        "Auriga RegiStar script generated by runregistar",
+        "----------------------------------------------------",
+    )
+    script.set_directory(str(input_dir))
 
     print("Input images:")
-    for i, in_path in enumerate(image_paths, 1):
+    for i, in_path in enumerate(input_images, 1):
         print(f"  {i:2}. {in_path.name}")
         if not in_path.is_file():
             raise ValueError(f"File not found: {in_path}")
         if in_path.parent != input_dir:
             raise ValueError(f"File not in input directory: {in_path}")
 
-    script: list[str]
-    """Generated RegiStar script."""
-
     if ARGS.operation == "register":
-        base_index = prompt_int("Enter the number of the base image: ", 1, len(image_paths), default=1) - 1
-
-        script: list[str] = [
-            "# ----------------------------------------------------",
-            "# Registration script generated by runregistar",
-            "# ----------------------------------------------------",
-            "",
-            f'SetDirectory( "{input_dir}" )',
-        ]
-
-        reg_images: list[str] = register(image_paths, script, base_index=base_index)[1]
-        for image, path in zip(reg_images, filter(lambda p: p != image_paths[base_index], image_paths)):
-            reg_name = path.stem + "_reg.tif"
-            output_images.append(output_dir / reg_name)
-            script.append(f'SaveAs( {image}, "{output_images[-1]}" )')
-            script.append("CloseAll( )")
-            script.append("")
+        base_index = (
+            prompt_int("Enter the number of the base image: ", 1, len(input_images), default=1) - 1
+        )
+        base_image: Image = input_images[base_index]
+        script.register_images(base_image, input_images)
+        for image in script.groups[base_image.id]:
+            if image.stem[-4:] == "_reg":
+                script.save_image(image)
+        script.close_all()
+        script.comment("----------------------------------------------------")
+        script.execute(exe_path)
 
     elif ARGS.operation == "stack":
-        script, output_images = stack(image_paths, input_dir, output_dir)
+        stack(input_images, script)
+        script.execute(exe_path)
 
     else:
         raise ValueError(f"Invalid operation: {ARGS.operation}")
 
-    # Write the script file
-    output_script_path = output_dir / "auriga_batch_job.txt"
-    with open(output_script_path, "w") as f:
-        f.write("\n".join(script))
-
-    print(f"RegiStar script generated at: {output_script_path}")
-
-    cmd = [exe_path, "-script", str(output_script_path)]
-    print(f"Running RegiStar: {cmd}")
-    result = subprocess.run(cmd, check=False)
-    if result.returncode != 0:
-        fatal_error(f"RegiStar failed with return code {result.returncode}")
-
     print("Output images:")
+    output_images = script.output_images(ARGS.operation)
     for out_path in output_images:
         print(f"  {out_path.name}")
         if not out_path.is_file():
@@ -372,13 +481,13 @@ def cli() -> None:
 
 
 def register_op() -> None:
-    """Insert registration operation in command-line arguments."""
+    """Insert registration operation in command line arguments."""
     sys.argv = [sys.argv[0]] + ["--operation", "register"] + sys.argv[1:]
     cli()
 
 
 def stack_op() -> None:
-    """Insert stacking operation in command-line arguments."""
+    """Insert stacking operation in command line arguments."""
     sys.argv = [sys.argv[0]] + ["--operation", "stack"] + sys.argv[1:]
     cli()
 
