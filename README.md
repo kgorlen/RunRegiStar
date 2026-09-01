@@ -28,19 +28,19 @@ It produces:
 The script validates input files, enforces a single directory for inputs, and
 prompts for stack sizes and the base image when needed.
 
-## INSTALL Python
+## Install Python
 
 See [Python](https://www.python.org/downloads/).
 
-## INSTALL pipx
+## Install pipx
 
 See [pipx](https://pypi.org/project/pipx/).
 
-## INSTALL RegiStar
+## Install RegiStar
 
 See the [Auriga Imaging RegiStar](https://aurigaimaging.com/) product page.
 
-## INSTALL runregistar
+## Install runregistar
 
 ```
 pipx install git+https://github.com/kgorlen/RunRegiStar.git
