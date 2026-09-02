@@ -24,9 +24,14 @@ It produces:
 
 - registered output images with names ending in `_reg.tif`
 - stacked output images with names ending in `_stk.tif`
+- `auriga_register_script.txt` file
+- `auriga_register_script.log` file
 
 The script validates input files, enforces a single directory for inputs, and
-prompts for stack sizes and the base image when needed.
+prompts for stack sizes and the base image as needed.
+
+It also checks for existing output images, prompts for OK to overwrite, and
+cancels the operation if not.
 
 ## Install Python
 
@@ -35,6 +40,10 @@ See [Python](https://www.python.org/downloads/).
 ## Install pipx
 
 See [pipx](https://pypi.org/project/pipx/).
+
+## Install git
+
+See [git](https://git-scm.com/install/)
 
 ## Install RegiStar
 
@@ -109,6 +118,8 @@ Application: `C:\Users\`*Username*`\.local\bin\runregistar-stack.exe`
 3. The script generates a RegiStar script and executes it.
 4. Registered images are saved with the `_reg.tif` suffix.
 
+Dimensions of registered images (*Register* operation) *Match* those of the base image.
+
 ### Stack images
 
 1. Run `runregistar-stack` with two or more TIFF files in the same folder.
@@ -116,6 +127,10 @@ Application: `C:\Users\`*Username*`\.local\bin\runregistar-stack.exe`
 3. Enter the number of images for each stack when prompted.
 4. The script generates the RegiStar combine operations and saves stacked files
    with the `_stk.tif` suffix.
+
+The *Combine* (stacking) operation is done using the *Median/Mean* function, and
+the dimensions of a stacked image are the *Intersection* of those of the
+registered images.
 
 ## Requirements
 

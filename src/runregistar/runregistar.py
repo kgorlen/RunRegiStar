@@ -112,6 +112,8 @@ class Script:
         Args:
             base_image (Image): Base image for registration.
             images_to_register (list[Image]): List of images to register.
+        Note:
+            Images are registered to Match the dimensions of the base image.
         """
         self.base_image_ids.append(base_image.id)
         for image in images_to_register:
@@ -131,6 +133,8 @@ class Script:
             images (list[Image]): List of images to stack.
         Returns:
             Image: Stacked Image.
+        Note:
+            Images are Combined using the Median/Mean function and Intersection of dimensions.
         """
         stack_image: Image = Image(self.output_dir / f"{images[0].stem}-{images[-1].stem}_stk.tif")
         """Stacked image."""
@@ -449,17 +453,25 @@ def main() -> None:
                 script.save_image(image)
         script.close_all()
         script.comment("----------------------------------------------------")
-        script.execute(exe_path)
 
     elif ARGS.operation == "stack":
         stack(input_images, script)
-        script.execute(exe_path)
 
     else:
         raise ValueError(f"Invalid operation: {ARGS.operation}")
 
-    print("Output images:")
     output_images = script.output_images(ARGS.operation)
+    existing_output_files = [img for img in output_images if img.is_file()]
+    if existing_output_files:
+        print("The following output files already exist:")
+        for out_path in existing_output_files:
+            print(f"  {out_path.name}")
+        if not prompt_yes_no("Overwrite existing files?", default=False):
+            raise ValueError("Operation cancelled.")
+
+    script.execute(exe_path)
+
+    print("Output images:")
     for out_path in output_images:
         print(f"  {out_path.name}")
         if not out_path.is_file():
