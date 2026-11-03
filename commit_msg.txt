@@ -1,8 +1,4 @@
-__version__ = '0.1.1'
+__version__ = '0.1.2'
 
 runregistar.py:
-- main(): Check for existing output files and prompt for OK to overwrite.
-
-README.md:
-- Update files written to include auriga_register_script.txt and log.
-- Add install git.
+- stack(): Bypass prompt for stack size if one stack.

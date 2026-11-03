@@ -348,7 +348,9 @@ def stack(input_images: list[Image], script: Script) -> None:
     stack_size: int
     """Size of current stack."""
 
-    if total_images % num_stacks == 0 and prompt_yes_no("Are all stacks equal in size"):
+    if num_stacks == 1:
+        images.append(input_images)
+    elif total_images % num_stacks == 0 and prompt_yes_no("Are all stacks equal in size"):
         stack_size = total_images // num_stacks
         images = [input_images[i : i + stack_size] for i in range(0, total_images, stack_size)]
     else:
