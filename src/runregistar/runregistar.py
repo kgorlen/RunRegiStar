@@ -341,7 +341,11 @@ def stack(input_images: list[Image], script: Script) -> None:
     """
     total_images: int = len(input_images)
     """Number of images to stack."""
-    num_stacks: int = prompt_int("Enter the total number of stacks to create", 1, total_images // 2)
+    num_stacks: int = (
+        1
+        if total_images <= 3
+        else prompt_int("Enter the total number of stacks to create", 1, total_images // 2)
+    )
     """Number of stacks to create."""
     images: list[list[Image]] = []
     """Input images in each stack."""
