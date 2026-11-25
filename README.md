@@ -12,6 +12,8 @@ no-inline-html MD033
 
 Run RegiStar from Lightroom Classic or as a command.
 
+**DEPRECATED -- Replaced by [RunSkyStacker](https://github.com/kgorlen/RunSkyStacker)**
+
 ## Overview
 
 This script wraps the Auriga Imaging RegiStar application so it can be run from
@@ -64,7 +66,7 @@ Application: runregistar-reg.exe
 File Format: TIFF  
 Template: Filename  
 
-reset: RegiStar (Stack)  
+Preset: RegiStar (Stack)  
 Application: runregistar-stack.exe  
 File Format: TIFF  
 Template: Filename  

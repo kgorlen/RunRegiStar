@@ -6,4 +6,4 @@ Tests/
 *.egg-info
 .conda
 *.code-workspace
-commit msg.txt
+commit_msg.txt
